@@ -1,0 +1,70 @@
+﻿# OpenPI real ALOHA profile. Verify robot identity and deployed policy_name.
+# joint_position includes grippers: [left arm 6, left gripper, right arm 6, right gripper].
+# Grippers use normalized ALOHA coordinates (0 closed, 1 open).
+# control_freq controls both the runner period and video FPS.
+
+# ===============================
+# ===== Robot Setup Related =====
+# ===============================
+
+policy_name: openpi_aloha
+robot_name: viperx_300
+gripper_name: viperx_300_gripper
+is_biarm: true
+uses_mobile_base: false
+control_freq: 50
+camera_names:
+  - top
+  - left_wrist
+  - right_wrist
+
+
+# ===============================
+# ===== Observation Related =====
+# ===============================
+
+robot_state_keys:
+  - joint_position
+  - gripper_position
+
+robot_state_joint_names:
+  - waist_left
+  - shoulder_left
+  - elbow_left
+  - forearm_roll_left
+  - wrist_angle_left
+  - wrist_rotate_left
+  - gripper_left
+  - waist_right
+  - shoulder_right
+  - elbow_right
+  - forearm_roll_right
+  - wrist_angle_right
+  - wrist_rotate_right
+  - gripper_right
+
+
+# ==========================
+# ===== Action Related =====
+# ==========================
+
+action_space:
+  - "joint_position"
+  - "gripper_position"
+
+action_joint_names:
+  - waist_left
+  - shoulder_left
+  - elbow_left
+  - forearm_roll_left
+  - wrist_angle_left
+  - wrist_rotate_left
+  - gripper_left
+  - waist_right
+  - shoulder_right
+  - elbow_right
+  - forearm_roll_right
+  - wrist_angle_right
+  - wrist_rotate_right
+  - gripper_right
+
