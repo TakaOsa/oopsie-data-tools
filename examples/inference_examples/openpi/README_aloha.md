@@ -31,6 +31,12 @@ Ctrl+C while waiting for the next task ends the session. Success in the CSV is
 derived from the browser annotation. Skipped annotations, or runs with
 `--no-wait-for-annotation`, leave outcome/success blank.
 
+The automatically launched annotation server runs in a separate process session
+so that a terminal Ctrl+C during rollout does not stop it. Wait for video saving
+and the annotation screen before continuing; pressing Ctrl+C again during saving
+or annotation can interrupt that work. The runner stops its annotation server
+when the session exits. Ctrl+C is a rollout interrupt, not a hardware emergency stop.
+
 The profile's `control_freq` sets the loop target and MP4 FPS (50 by default).
 600 steps are nominally 12 seconds; synchronous inference can extend this.
 `open_loop_horizon` must be no larger than the returned action chunk length.
@@ -45,7 +51,15 @@ State and action order is `[left arm 6, left gripper, right arm 6, right gripper
 Both 14-vectors are stored under `joint_position`; indices 6 and 13 are also
 stored under `gripper_position`. Commands use absolute joint positions and
 continuous normalized grippers, matching `real_env.step`. There is no DROID
-velocity clipping, gripper binarization, or additional moving average.
+velocity clipping or gripper binarization.
+To enable the same action moving average as `aloha_real/main.py`, add
+`--moving-average --moving-average-window 10 --moving-average-k 0.1`.
+It averages the most recent selected action vectors, including grippers, with
+weights `exp(-k * age)` (newest age is zero). It runs once per control step,
+keeps history across inference chunks, and clears history for every episode.
+Oopsie records the smoothed command actually sent to the robot. The default is
+disabled; `k=0` uses an ordinary window average and window size 1 leaves actions
+unchanged. Smoothing can delay responses to action changes.
 Snapshots pair pre-action observations with the command passed to `env.step`;
 they do not claim that the measured joints have reached the target.
 

@@ -12,6 +12,7 @@ import importlib
 import signal
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,13 @@ class Args:
     max_timesteps: int = 600
     # 0.5 seconds at 50 Hz; must not exceed the server's chunk length.
     open_loop_horizon: int = 25
+    # Smooth selected actions before execution and recording.
+    moving_average: bool = False
+    # Maximum number of recent action vectors to average.
+    moving_average_window: int = 10
+    # Exponential decay by action age; zero gives uniform weights.
+    moving_average_k: float = 0.1
+    # Root directory for saved episodes and evaluation CSV files.
     data_root_dir: Path = Path("./data")
     resume_session_name: Optional[str] = None
     annotator_port: int = 5003
@@ -135,6 +143,30 @@ def _validate_chunk(actions, horizon):
     return chunk
 
 
+class _ActionMovingAverage:
+    """Match aloha_real.main's finite-window exponential action average."""
+
+    def __init__(self, window_size: int, k: float):
+        if window_size <= 0:
+            raise ValueError("moving_average_window must be positive")
+        if not np.isfinite(k) or k < 0:
+            raise ValueError("moving_average_k must be finite and non-negative")
+        self._history = deque(maxlen=window_size)
+        self._k = k
+
+    def reset(self):
+        self._history.clear()
+
+    def apply(self, action):
+        action = np.asarray(action)
+        self._history.append(action.copy())
+        actions = np.stack(self._history)
+        ages = np.arange(len(actions) - 1, -1, -1, dtype=np.float64)
+        weights = np.exp(-self._k * ages)
+        weights /= weights.sum()
+        return np.sum(actions * weights[:, None], axis=0).astype(action.dtype, copy=False)
+
+
 def _record_step(annotator, obs, action):
     annotator.record_step(
         observation={
@@ -154,6 +186,13 @@ def _record_step(annotator, obs, action):
 def main(args: Args):
     if args.max_timesteps <= 0 or args.open_loop_horizon <= 0:
         raise ValueError("max_timesteps and open_loop_horizon must be positive")
+    smoother = (
+        _ActionMovingAverage(args.moving_average_window, args.moving_average_k)
+        if args.moving_average else None
+    )
+    if smoother is not None:
+        print(f"Action moving average enabled (window={args.moving_average_window}, "
+              f"k={args.moving_average_k:g})")
     profile = load_robot_profile(args.robot_profile)
     _validate_profile(profile)
     real_env = _load_real_env(args.openpi_root)
@@ -188,6 +227,8 @@ def main(args: Args):
             while True:
                 instruction = annotator.wait_for_task()
                 annotator.reset_episode_recorder()
+                if smoother is not None:
+                    smoother.reset()
                 chunk = None
                 chunk_index = 0
                 num_steps = 0
@@ -204,6 +245,8 @@ def main(args: Args):
                         # Absolute joint positions and continuous grippers: no DROID clipping.
                         action = chunk[chunk_index].copy()
                         with prevent_keyboard_interrupt():
+                            if smoother is not None:
+                                action = smoother.apply(action)
                             env.step(action.copy())
                             _record_step(annotator, obs, action)
                             num_steps += 1

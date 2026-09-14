@@ -101,6 +101,10 @@ class WebRolloutAnnotator:
             # stderr is kept so a failure to start is visible; discarding it was why a
             # server that died on startup looked identical to one that was merely slow.
             stdout=subprocess.DEVNULL,
+            # A terminal Ctrl+C must interrupt the rollout, not the annotation
+            # server needed to save its annotation afterwards. stop() still
+            # terminates and reaps this process explicitly on session exit.
+            start_new_session=True,
         )
         atexit.register(self.stop)
 
