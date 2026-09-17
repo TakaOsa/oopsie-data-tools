@@ -12,7 +12,7 @@ robot_name: viperx_300
 gripper_name: viperx_300_gripper
 is_biarm: true
 uses_mobile_base: false
-control_freq: 8
+control_freq: 50
 camera_names:
   - top
   - left_wrist

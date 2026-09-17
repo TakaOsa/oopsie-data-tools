@@ -234,9 +234,11 @@ def main(args: Args):
                 num_steps = 0
                 rollout_start = time.monotonic()
                 try:
+                    raw_obs = env.get_observation() # test
                     for _ in range(args.max_timesteps):
                         step_start = time.monotonic()
-                        obs = _extract_observation(env.get_observation())
+                        # obs = _extract_observation(env.get_observation())
+                        obs = _extract_observation(raw_obs) # test
                         if chunk is None or chunk_index >= args.open_loop_horizon:
                             with prevent_keyboard_interrupt():
                                 response = policy_client.infer(_policy_request(obs, instruction))
@@ -247,7 +249,8 @@ def main(args: Args):
                         with prevent_keyboard_interrupt():
                             if smoother is not None:
                                 action = smoother.apply(action)
-                            env.step(action.copy())
+                            # env.step(action.copy())
+                            raw_obs = env.step(action.copy()).observation # test
                             _record_step(annotator, obs, action)
                             num_steps += 1
                         chunk_index += 1
