@@ -5,11 +5,15 @@ Source layout (one file per episode, as written by the ACT / ACT++ recording sta
   /action                                  (T, 14)  target joint positions, both arms
   /observations/qpos                       (T, 14)  measured joint positions, both arms
   /observations/qvel, /observations/effort  (T, 14) optional, unused here
-  /success                                 (T,)     per-timestep success flag
+  /success                                 (T,)     optional per-timestep success flag
   /compress_len                            (3, T)   JPEG byte lengths, one row per camera
-  /observations/images/camera_high         (T, ...) frames, JPEG-compressed or raw RGB
-  /observations/images/camera_wrist_left   (T, ...)
-  /observations/images/camera_wrist_right  (T, ...)
+  /observations/images/cam_high            (T, ...) frames, JPEG-compressed or raw
+  /observations/images/cam_left_wrist      (T, ...)
+  /observations/images/cam_right_wrist     (T, ...)
+
+For successful human demonstrations without /success, pass --default-success 1.
+Use --raw-image-color-order bgr if the recorder saved raw BGR rather than RGB.
+Only the three cameras above are exported; cam_low is not used.
 
 Both 14-vectors are ``[6 arm joints + gripper]`` per arm. They are written out whole as
 ``joint_position``, matching the 14 entries in the profile's joint-name lists, with the two
@@ -72,9 +76,9 @@ GRIPPER_IDX = [6, 13]
 
 # Source dataset → output camera name. The order is also the row order of /compress_len.
 CAMERA_MAP = {
-    "camera_high": "top",
-    "camera_wrist_left": "left_wrist",
-    "camera_wrist_right": "right_wrist",
+    "cam_high": "top",
+    "cam_left_wrist": "left_wrist",
+    "cam_right_wrist": "right_wrist",
 }
 
 JOINT_NAMES = [
@@ -109,11 +113,13 @@ def build_profile(policy_name: str, control_freq: int) -> RobotProfile:
     )
 
 
-def _decode_frames(raw: np.ndarray, lengths: np.ndarray | None) -> np.ndarray:
+def _decode_frames(
+    raw: np.ndarray, lengths: np.ndarray | None, raw_image_color_order: str = "rgb"
+) -> np.ndarray:
     """Return ``(T, H, W, 3)`` RGB frames from a camera dataset.
 
     ``lengths`` is the camera's ``/compress_len`` row; without it the dataset is assumed to
-    hold raw RGB frames already, which is how uncompressed ALOHA recordings are stored.
+    hold raw frames in the explicitly selected color order. JPEG decoding always returns RGB.
     """
     if lengths is None:
         if raw.ndim != 4 or raw.shape[-1] != 3:
@@ -121,7 +127,8 @@ def _decode_frames(raw: np.ndarray, lengths: np.ndarray | None) -> np.ndarray:
                 f"Camera dataset has shape {raw.shape} and the file has no /compress_len, "
                 "so it is neither raw RGB nor decodable JPEG."
             )
-        return np.asarray(raw, dtype=np.uint8)
+        frames = np.asarray(raw, dtype=np.uint8)
+        return frames[..., ::-1].copy() if raw_image_color_order == "bgr" else frames
 
     frames = []
     for t in range(raw.shape[0]):
@@ -145,6 +152,8 @@ def convert_one(
     policy_name: str,
     control_freq: int,
     success_aggregation: str,
+    default_success: float | None = None,
+    raw_image_color_order: str = "rgb",
 ) -> None:
     profile = build_profile(policy_name, control_freq)
 
@@ -152,18 +161,24 @@ def convert_one(
         action = src["action"][()]
         qpos = src["observations/qpos"][()]
 
-        success_per_step = src["success"][()]
-        if success_per_step.size == 0:
-            raise Skip("no /success values to aggregate")
-        success = float(
-            success_per_step[-1] if success_aggregation == "last" else success_per_step.max()
-        )
+        if "success" in src:
+            success_per_step = np.asarray(src["success"][()]).reshape(-1)
+            if success_per_step.size == 0:
+                raise Skip("no /success values to aggregate")
+            success = float(
+                success_per_step[-1] if success_aggregation == "last" else success_per_step.max()
+            )
+        elif default_success is not None:
+            success = float(default_success)
+        else:
+            raise ValueError("Missing /success; pass --default-success 1 for successful demos")
 
         compress_len = src["compress_len"][()] if "compress_len" in src else None
         frames = {
             camera: _decode_frames(
                 src[f"observations/images/{key}"][()],
                 None if compress_len is None else compress_len[row],
+                raw_image_color_order,
             )
             for row, (key, camera) in enumerate(CAMERA_MAP.items())
         }
@@ -246,6 +261,19 @@ def main() -> None:
         default="max",
         help="How to collapse the per-timestep /success flag to a scalar (default: max).",
     )
+    parser.add_argument(
+        "--default-success",
+        type=float,
+        choices=[0.0, 1.0],
+        default=None,
+        help="Outcome when /success is absent: 1 for successful demos, 0 for failures.",
+    )
+    parser.add_argument(
+        "--raw-image-color-order",
+        choices=["rgb", "bgr"],
+        default="rgb",
+        help="Color order of uncompressed source images (default: rgb); JPEGs are unaffected.",
+    )
     args = parser.parse_args()
 
     out = ConversionOutput.create(args.output_dir)
@@ -260,6 +288,8 @@ def main() -> None:
             policy_name=args.policy_name,
             control_freq=args.control_freq,
             success_aggregation=args.success_aggregation,
+            default_success=args.default_success,
+            raw_image_color_order=args.raw_image_color_order,
         ),
         out=out,
         label=lambda path: path.name,
